@@ -1,16 +1,261 @@
+
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
-    <meta charset="UTF-8">
-    <title>האפליקציה שלי</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ניהול מסט"בים</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f1f5f9;color:#1e293b;font-family:Arial}
+header{background:#17365d;color:white;padding:22px;text-align:center}
+main{max-width:950px;margin:25px auto;padding:15px}
+.card{background:white;padding:20px;border-radius:12px;margin-bottom:15px;box-shadow:0 2px 8px #0001}
+input,select,button,textarea{width:100%;padding:12px;margin:6px 0;border:1px solid #cbd5e1;border-radius:7px;font-size:16px}
+button{background:#2563eb;color:white;border:0;cursor:pointer;font-weight:bold}
+button.secondary{background:#475569}
+h2{color:#17365d}
+.item{border:1px solid #ddd;padding:14px;border-radius:9px;margin:10px 0}
+.small{font-size:13px;color:#64748b}
+.hidden{display:none}
+</style>
 </head>
 <body>
 
-    <h1>ברוכים הבאים לאפליקציה שלי!</h1>
+<header>
+<h1>מערכת ניהול מסט"בים</h1>
+<p>ניהול ציוד, מסגרות ובחינות</p>
+</header>
 
-    <button onclick="alert('שלום!')">
-        לחץ כאן
-    </button>
+<main>
+<section id="login" class="card">
+<h2>התחברות למערכת</h2>
+<input id="email" type="email" placeholder="כתובת אימייל">
+<input id="password" type="password" placeholder="סיסמה">
+<button onclick="login()">כניסה למערכת</button>
+<p id="loginMsg"></p>
+</section>
 
+<section id="app" class="hidden">
+<div class="card">
+<h2 id="welcome">שלום</h2>
+<p id="role"></p>
+<button class="secondary" onclick="logout()">יציאה</button>
+</div>
+
+<div class="card">
+<h2>בחירת מסגרת</h2>
+<select id="frameSelect" onchange="loadEquipment()"></select>
+</div>
+
+<div id="adminPanel" class="card hidden">
+<h2>הוספת ציוד חדש</h2>
+<input id="eqName" placeholder="שם הציוד">
+<input id="eqType" placeholder="סוג הציוד">
+<input id="eqSerial" placeholder="מספר מזהה">
+<textarea id="eqNotes" placeholder="הערות"></textarea>
+<button onclick="addEquipment()">הוספת ציוד</button>
+</div>
+
+<div class="card">
+<h2>רשימת ציוד</h2>
+<input id="search" placeholder="חיפוש לפי שם או סוג..." oninput="filterEquipment()">
+<div id="equipmentList">טוען נתונים...</div>
+</div>
+
+<div class="card">
+<h2>היסטוריית בחינות</h2>
+<div id="historyList">בחר ציוד לצפייה בהיסטוריה</div>
+</div>
+</section>
+</main>
+
+<script>
+const SUPABASE_URL = "https://nxpvlpyjmdxphomusbsi.supabase.co";
+const SUPABASE_KEY = "sb_publishable_ot3q_Z_jNmQeD83PavuAmQ_WwaxXhLk";
+
+const db = window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+
+let profile = null;
+let equipment = [];
+let frames = [];
+
+async function login(){
+ const email=document.getElementById('email').value;
+ const password=document.getElementById('password').value;
+ const msg=document.getElementById('loginMsg');
+ msg.textContent='מתחבר...';
+ const {error}=await db.auth.signInWithPassword({email,password});
+ if(error){msg.textContent='שגיאה: '+error.message;return;}
+ await startApp();
+}
+
+async function startApp(){
+ const {data:{user}}=await db.auth.getUser();
+ if(!user)return;
+ const {data,error}=await db.from('profiles')
+ .select('*').eq('id',user.id).single();
+ if(error){alert('לא נמצאו הרשאות משתמש. פנה למנהל.');return;}
+ profile=data;
+ document.getElementById('login').classList.add('hidden');
+ document.getElementById('app').classList.remove('hidden');
+ document.getElementById('welcome').textContent='שלום, '+user.email;
+ document.getElementById('role').textContent=
+ profile.role==='admin'?'מנהל מערכת':'משתמש מסגרת';
+ document.getElementById('adminPanel').classList.toggle('hidden',profile.role!=='admin');
+ await loadFrames();
+}
+
+async function loadFrames(){
+ let query=db.from('frames').select('*').order('name');
+ if(profile.role!=='admin')query=query.eq('id',profile.frame_id);
+ const {data,error}=await query;
+ if(error){alert(error.message);return;}
+ frames=data||[];
+ const select=document.getElementById('frameSelect');
+ select.innerHTML='';
+ frames.forEach(f=>{
+  const option=document.createElement('option');
+  option.value=f.id;
+  option.textContent=f.name;
+  select.appendChild(option);
+ });
+ await loadEquipment();
+}
+
+async function loadEquipment(){
+ const frameId=document.getElementById('frameSelect').value;
+ if(!frameId)return;
+ const {data,error}=await db.from('equipment')
+ .select('*').eq('frame_id',frameId).order('name');
+ if(error){alert(error.message);return;}
+ equipment=data||[];
+ filterEquipment();
+}
+
+function filterEquipment(){
+ const search=document.getElementById('search').value.toLowerCase();
+ const list=document.getElementById('equipmentList');
+ list.innerHTML='';
+ equipment.filter(e=>
+ (e.name+' '+(e.equipment_type||'')+' '+(e.serial_number||''))
+ .toLowerCase().includes(search)
+ ).forEach(e=>{
+  const div=document.createElement('div');
+  div.className='item';
+  const title=document.createElement('strong');
+  title.textContent=e.name;
+  const info=document.createElement('p');
+  info.textContent='סוג: '+(e.equipment_type||'לא הוגדר')+
+  ' | מספר: '+(e.serial_number||'לא הוגדר');
+  const notes=document.createElement('p');
+  notes.textContent=e.notes||'';
+  const button=document.createElement('button');
+  button.textContent='צפייה בהיסטוריה ועדכון בחינה';
+  button.onclick=()=>showHistory(e);
+  div.append(title,info,notes,button);
+  list.appendChild(div);
+ });
+ if(!list.children.length)list.textContent='לא נמצא ציוד';
+}
+
+async function addEquipment(){
+ const name=document.getElementById('eqName').value.trim();
+ const type=document.getElementById('eqType').value.trim();
+ const serial=document.getElementById('eqSerial').value.trim();
+ const notes=document.getElementById('eqNotes').value.trim();
+ const frameId=document.getElementById('frameSelect').value;
+ if(!name||!frameId){alert('יש להזין שם ציוד ולבחור מסגרת');return;}
+ const {error}=await db.from('equipment').insert({
+  name,equipment_type:type,serial_number:serial,
+  notes,frame_id:frameId
+ });
+ if(error){alert(error.message);return;}
+ alert('הציוד נוסף בהצלחה');
+ ['eqName','eqType','eqSerial','eqNotes'].forEach(id=>document.getElementById(id).value='');
+ await loadEquipment();
+}
+
+async function showHistory(item){
+ const list=document.getElementById('historyList');
+ list.innerHTML='';
+ const heading=document.createElement('h3');
+ heading.textContent=item.name;
+ list.appendChild(heading);
+
+ const form=document.createElement('div');
+ form.className='item';
+ form.innerHTML=`
+  <h3>רישום בחינה חדשה</h3>
+  <label>תאריך בחינה</label>
+  <input id="examDate" type="date">
+  <label>שם הבוחן</label>
+  <input id="examiner" placeholder="שם מלא">
+  <label>תוצאה</label>
+  <select id="examResult">
+   <option value="עבר">עבר</option>
+   <option value="נכשל">נכשל</option>
+   <option value="ממתין">ממתין</option>
+  </select>
+  <textarea id="examNotes" placeholder="הערות"></textarea>
+  <button id="saveExam">שמירת בחינה</button>`;
+ list.appendChild(form);
+
+ if(profile.role!=='admin'){
+  document.getElementById('saveExam').onclick=()=>saveInspection(item.id);
+ }else{
+  document.getElementById('saveExam').onclick=()=>saveInspection(item.id);
+ }
+
+ const {data,error}=await db.from('inspection_history')
+ .select('*').eq('equipment_id',item.id)
+ .order('inspection_date',{ascending:false});
+ if(error){alert(error.message);return;}
+
+ const title=document.createElement('h3');
+ title.textContent='בחינות קודמות';
+ list.appendChild(title);
+ (data||[]).forEach(h=>{
+  const div=document.createElement('div');
+  div.className='item';
+  div.textContent=`תאריך: ${h.inspection_date} | בוחן: ${h.examiner_name} | תוצאה: ${h.result||''} | הערות: ${h.notes||''}`;
+  list.appendChild(div);
+ });
+}
+
+async function saveInspection(id){
+ const date=document.getElementById('examDate').value;
+ const examiner=document.getElementById('examiner').value.trim();
+ const result=document.getElementById('examResult').value;
+ const notes=document.getElementById('examNotes').value.trim();
+ const {data:{user}}=await db.auth.getUser();
+ if(!date||!examiner){alert('יש להזין תאריך ושם בוחן');return;}
+ const {error}=await db.from('inspection_history').insert({
+  equipment_id:id,inspection_date:date,
+  examiner_name:examiner,result,notes,created_by:user.id
+ });
+ if(error){alert(error.message);return;}
+ alert('הבחינה נשמרה בהצלחה');
+ const item=equipment.find(e=>e.id===id);
+ if(item)await showHistory(item);
+}
+
+async function logout(){
+ await db.auth.signOut();
+ location.reload();
+}
+
+db.auth.onAuthStateChange((event,session)=>{
+ if(event==='SIGNED_IN'&&session){
+  setTimeout(()=>startApp(),0);
+ }
+});
+
+(async()=>{
+ const {data:{session}}=await db.auth.getSession();
+ if(session)await startApp();
+})();
+</script>
 </body>
 </html>
